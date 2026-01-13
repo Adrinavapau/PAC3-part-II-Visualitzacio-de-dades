@@ -1,0 +1,356 @@
+---
+title: "Part2"
+author: "Adrià Navarro Pau"
+date: "2026-01-13"
+output:
+  prettydoc::html_pretty:
+    theme: cayman
+    highlight: textmate 
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, results="hide", message=FALSE, warning=FALSE}
+# llibreries necesaries
+library(DT)
+library(dplyr)
+library(plotly)
+library(countrycode)
+library(ggplot2)
+
+```
+
+
+```{r, eval = FALSE}
+x <- read.csv("data/ESSportal.csv")
+```
+
+
+
+## Seleció de dades:
+
+```{r, eval = FALSE}
+ x$religio <- factor(x$rlgdnm, levels = c(1,2,3,4,5,6,7,8,66,77,99), 
+                    labels = c("Roman Catholic", "Protestant","Eastern Orthodox",
+                               "Other Christian denomination", "Jewish", "Islamic",
+                               "Eastern religions","Other non-Christian religions",
+                               "Ateu", "No answer", "No answer"))
+
+ Convertir lrscale a factor qualitatiu
+x$lrscale <- factor(x$lrscale, 
+                             levels = c(0:10, 77, 88, 99),
+                             labels = c("Left", 1, 2, 3, 4, 5, 6, 7, 8, 9, "Right", "Refusal", "Don't know", "No answer"))
+
+
+
+Pol_Re <- x[, c(
+  "cntry", "essround",
+  # Religió
+  "religio", "rlgdgr", "rlgatnd", "pray",
+  # Política
+  "lrscale", "polintr", "vote", "ptcpplt",
+  "trstprt", "trstprl", "trstplt",
+  
+  # Economia / benestar
+  "stfeco", "gincdif", "freehms", "happy", "hlthhmp",
+  # Pes
+  "dweight"
+)]
+
+write.csv(Pol_Re, file = "Pol_Re_processat.csv", row.names = FALSE)
+
+```
+
+
+
+## Taula de variables:
+
+```{r, echo=FALSE, message=FALSE}
+Pol_Re <- read.csv("Pol_Re_processat.csv")
+
+Variables <- data.frame(
+  Variable = c(
+    "cntry", "essround",
+    "religio", "rlgdgr", "rlgatnd", "pray",
+    "lrscale", "polintr", "vote", "ptcpplt",
+    "trstprt", "trstprl", "trstplt",
+    "stfeco", "gincdif", "freehms", "happy", "hlthhmp",
+    "dweight"
+  ),
+  Ambit = c(
+    "Context territorial", "Dimensió temporal",
+    "Religió", "Religió", "Religió", "Religió",
+    "Política", "Política", "Política", "Política",
+    "Política", "Política", "Política",
+    "Economia", "Economia", "Economia / Valors", "Benestar", "Benestar",
+    "Pes estadístic"
+  ),
+  Descripcio = c(
+    "País de residència del participant",
+    "Ronda de l’European Social Survey (2002–2022)",
+    "Religió declarada per la persona entrevistada",
+    "Grau en què la persona es considera religiosa",
+    "Freqüència d’assistència a serveis religiosos",
+    "Freqüència amb què la persona resa",
+    "Autoubicació ideològica en l’eix esquerra-dreta",
+    "Interès declarat per la política",
+    "Participació en les últimes eleccions",
+    "Nivell de participació política no electoral",
+    "Confiança en els partits polítics",
+    "Confiança en el parlament",
+    "Confiança en els polítics",
+    "Satisfacció amb la situació econòmica del país",
+    "Opinió sobre la desigualtat d’ingressos",
+    "Actituds envers llibertats civils i econòmiques",
+    "Nivell general de felicitat",
+    "Estat de salut percebut",
+    "Pes de disseny per obtenir estimacions representatives"
+  ),
+  stringsAsFactors = FALSE
+)
+
+datatable(
+  Variables,
+  options = list(pageLength = 5),
+  caption = "Diccionari de variables utilitzades en l’anàlisi política i religiosa"
+)
+
+  
+  
+```
+
+
+## Mapa interactiu ESS: religió o tendència política
+
+```{r, echo=FALSE, warning=FALSE}
+
+
+# --- 1. Preparar dades ---
+# Convertir codis ISO-2 a ISO-3
+Pol_Re$iso3 <- countrycode(Pol_Re$cntry, "iso2c", "iso3c")
+
+# --- Tendència política predominant per país (només Left i Right) ---
+Pol_Re_filtrat <- Pol_Re %>%
+  filter(lrscale %in% c("Left", "Right"))  # només 0 i 10
+
+tend_pais <- Pol_Re_filtrat %>%
+  group_by(cntry) %>%
+  count(lrscale) %>%
+  slice_max(n, n = 1) %>%      # categoria majoritària
+  ungroup() %>%
+  select(cntry, lrscale) %>%
+  mutate(iso3 = countrycode(cntry, "iso2c", "iso3c"))
+
+# --- Religió predominant per país ---
+rel_pais <- Pol_Re %>%
+  group_by(cntry) %>%
+  count(religio) %>%
+  slice_max(n, n = 1) %>%
+  ungroup() %>%
+  select(cntry, religio) %>%
+  mutate(iso3 = countrycode(cntry, "iso2c", "iso3c"))
+
+# --- Combinar dades ---
+mapa_pais <- rel_pais %>%
+  left_join(tend_pais, by = c("cntry","iso3"))
+
+# --- Colors per religió i per tendència política ---
+mapa_pais$religio <- factor(mapa_pais$religio)
+colors_rel <- RColorBrewer::brewer.pal(n = length(levels(mapa_pais$religio)), "Set3")
+
+mapa_pais$lrscale <- factor(mapa_pais$lrscale, levels = c("Left","Right"))
+colors_pol <- c("Left" = "blue", "Right" = "red")
+
+# --- Crear mapa interactiu amb botons ---
+fig <- plot_ly(mapa_pais, type='choropleth',
+               locations = ~iso3,
+               z = ~as.numeric(religio),
+               text = ~paste("País:", cntry, "<br>Religió:", religio),
+               colors = colors_rel,
+               showscale = FALSE)
+
+fig <- fig %>% layout(
+  geo = list(showframe = FALSE, projection = list(type = 'natural earth')),
+  updatemenus = list(
+    list(
+      type = "buttons",
+      y = 1.1,
+      buttons = list(
+        list(method = "restyle",
+             args = list(list(
+               z = list(as.numeric(mapa_pais$religio)),
+               text = list(paste("País:", mapa_pais$cntry, "<br>Religió:", mapa_pais$religio)),
+               colors = list(colors_rel),
+               showscale = FALSE
+             )),
+             label = "Religió"),
+        list(method = "restyle",
+             args = list(list(
+               z = list(as.numeric(mapa_pais$lrscale)),
+               text = list(paste("País:", mapa_pais$cntry, "<br>Tendència política:", mapa_pais$lrscale)),
+               colors = list(colors_pol),
+               showscale = FALSE
+             )),
+             label = "Tendència política")
+      )
+    )
+  )
+)
+
+fig
+
+```
+
+## Proporció de persones que van votar segons religió (ponderat)
+
+```{r, echo=FALSE}
+# --- 0. Convertir 'vote' a numèrica correctament ---
+Pol_Re$vote_num <- as.numeric(as.character(Pol_Re$vote))
+
+# --- 1. Filtrar respostes vàlides i crear variable binària ---
+Pol_Re_vote <- Pol_Re %>%
+  filter(vote_num %in% c(1,2)) %>%   # només Yes (1) i No (2)
+  filter(!is.na(religio)) %>%
+  filter(!religio %in% c("No answer", "Refusal", "Don't know")) %>% 
+  mutate(vote_bin = ifelse(vote_num == 1, 1, 0))  # 1 = votant, 0 = no votant
+
+# --- 2. Calcular percentatge ponderat per religió ---
+votants_religio <- Pol_Re_vote %>%
+  group_by(religio) %>%
+  summarise(
+    n_votants_ponderat = sum(vote_bin * dweight, na.rm = TRUE),
+    n_total_ponderat = sum(dweight, na.rm = TRUE),
+    pct_votants = n_votants_ponderat / n_total_ponderat * 100
+  ) %>%
+  ungroup()
+
+# --- 3. Bar plot amb percentatge dins de cada barra ---
+ggplot(votants_religio, aes(x = religio, y = pct_votants, fill = religio)) +
+  geom_col() +
+  geom_text(aes(label = paste0(round(pct_votants,1),"%")), 
+            vjust = -0.5, size = 3) +  # percentatge a sobre de cada barra
+  theme_minimal() +
+  labs(
+    x = "Religió",
+    y = "Percentatge de votants"
+  ) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        legend.position = "none")
+
+```
+
+## Evolució de la religió i la política al llarg dels anys:
+
+```{r, warning=FALSE, echo=FALSE}
+
+
+# --- 1. Calcular tendència política PER CADA ANY (Ronda) ---
+info_politica <- Pol_Re %>%
+  filter(!is.na(lrscale)) %>% 
+  # Convertir lrscale a numèric (0=Esquerra, 10=Dreta)
+  mutate(lr_num = case_when(
+    as.character(lrscale) == "Left" ~ 0,
+    as.character(lrscale) == "Right" ~ 10,
+    TRUE ~ as.numeric(as.character(lrscale))
+  )) %>%
+  group_by(cntry, essround) %>%
+  summarise(mitjana_pol = mean(lr_num, na.rm = TRUE), .groups = 'drop') %>%
+  mutate(
+    # Lògica del Color: Si > 5 és Dreta (Blau), sino Esquerra (Vermell)
+    color_punt = ifelse(mitjana_pol > 5, "blue", "red"),
+    text_pol = ifelse(mitjana_pol > 5, "Dreta", "Esquerra"),
+    iso3 = countrycode(cntry, "iso2c", "iso3c")
+  ) %>%
+  filter(!is.na(iso3))
+
+# --- 2. Preparar dades de Religiositat (Eix Y) ---
+religiositat_pais <- Pol_Re %>%
+  filter(!is.na(rlgdgr)) %>%
+  group_by(cntry, essround) %>%
+  summarise(religiositat_mitjana = mean(rlgdgr, na.rm = TRUE), .groups = 'drop') %>%
+  mutate(iso3 = countrycode(cntry, "iso2c", "iso3c")) %>%
+  filter(!is.na(iso3))
+
+# --- 3. Unir-ho tot en una taula mestra ---
+dades_final <- religiositat_pais %>%
+  left_join(info_politica, by = c("cntry", "essround", "iso3")) %>%
+  # Si falta dada política algun any, posem gris
+  mutate(
+    color_punt = ifelse(is.na(color_punt), "grey", color_punt),
+    text_pol = ifelse(is.na(text_pol), "Sense dades", text_pol)
+  ) %>%
+  # MOLT IMPORTANT: Ordenar per any per dibuixar la línia bé
+  arrange(iso3, essround)
+
+# --- 4. Crear el gràfic ---
+paisos <- unique(dades_final$iso3)
+fig <- plot_ly()
+
+for(i in seq_along(paisos)) {
+  pais_actual <- paisos[i]
+  df_plot <- dades_final %>% filter(iso3 == pais_actual)
+  
+  fig <- fig %>% add_trace(
+    x = df_plot$essround,
+    y = df_plot$religiositat_mitjana,
+    type = 'scatter',
+    mode = 'lines+markers', # Dibuixem línies I punts
+    name = pais_actual,
+    
+    # --- CONFIGURACIÓ DE LA LÍNIA (NEUTRA) ---
+    line = list(color = 'lightgrey', width = 1), 
+    
+    # --- CONFIGURACIÓ DELS PUNTS (COLORS DINÀMICS) ---
+    marker = list(
+      color = df_plot$color_punt, # Aquí assignem el vector de colors (blau/vermell)
+      size = 12,                  # Punts grans per veure bé el color
+      line = list(color = 'black', width = 1) # Vora negra al punt
+    ),
+    
+    # Text al passar el ratolí
+    text = paste("<b>País:</b>", df_plot$iso3,
+                 "<br><b>Any/Ronda:</b>", df_plot$essround,
+                 "<br><b>Religiositat:</b>", round(df_plot$religiositat_mitjana, 2),
+                 "<br><b>Política:</b>", df_plot$text_pol), # Mostra "Dreta" o "Esquerra"
+    hoverinfo = "text",
+    visible = (i == 1) # Només el primer visible al principi
+  )
+}
+
+# --- 5. Crear el menú desplegable ---
+buttons <- lapply(seq_along(paisos), function(i) {
+  visibility <- rep(FALSE, length(paisos))
+  visibility[i] <- TRUE
+  
+  list(
+    method = "update",
+    args = list(list(visible = visibility), 
+                list(title = paste("Religiositat i Política:", paisos[i]))),
+    label = paisos[i]
+  )
+})
+
+# --- 6. Layout Final ---
+fig <- fig %>% layout(
+  title = paste("Religiositat i Política:", paisos[1]),
+  xaxis = list(title = "Ronda ESS (Temps)"),
+  yaxis = list(title = "Religiositat Mitjana (0 = Gens, 10 = Molt)", range = c(0, 10)),
+  updatemenus = list(
+    list(
+      type = "dropdown",
+      active = 0,
+      x = 1.15,
+      y = 1,
+      buttons = buttons
+    )
+  ),
+  showlegend = FALSE
+)
+
+fig
+
+```
+
+
